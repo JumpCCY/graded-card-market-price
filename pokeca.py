@@ -34,7 +34,6 @@ def request_card_price(id):
     if not info_data:
         return None, None, None
 
-  
     price_data = price_res.json()
 
     if not price_data:
@@ -45,7 +44,7 @@ def request_card_price(id):
     # loop for price data from snkrdunk
     for i in price_data:
         if i["shop_id"] == 9 and i["item_status"] == 2:
-            snkrdunk_min_price = i["min_price"] 
+            snkrdunk_min_price = i["min_price"]
             snkrdunk_shop_link = i["url"]
 
     if snkrdunk_min_price is None:
@@ -66,32 +65,46 @@ i = 1
 write_lock = threading.Lock()
 
 
-def fetch_batch(start_id, end_id, workers=10):
+def fetch_batch(start_id=1, batch_size=50, workers=10):
     """Fetch card data using multithreading."""
-    global df, none_streak
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(request_card_price, i): i
-            for i in range(start_id, end_id + 1)
-        }
-        for future in as_completed(futures):
-            card_id = futures[future]
-            try:
-                name, price, link = future.result()
-            except Exception as e:
-                print(f"id {card_id}: error -> {e}")
-                continue
 
-            if name and price:
-                none_streak = 0
-                # protect concurrent writes to df / CSV
-                with write_lock:
-                    name = re.search(r"\[(.*?)\]", name).group(1)
-                    df = add_card_to_table(df, card_id, name, price, link, csv_file)
-                print(f"id {card_id}: added ({name}, {price} JPY)")
-            else:
-                none_streak += 1
-                print(f"id {card_id}: skipped (no data)")
+    while True:
+        end_id = start_id + batch_size - 1
 
+        global df, none_streak
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(request_card_price, i): i
+                for i in range(start_id, end_id + 1)
+            }
+            for future in as_completed(futures):
 
-fetch_batch(1, 700, workers=30)
+                card_id = futures[future]
+                try:
+                    name, price, link = future.result()
+                except Exception as e:
+                    print(f"id {card_id}: error -> {e}")
+                    continue
+
+                if name and price:
+                    none_streak = 0
+                    # protect concurrent writes to df / CSV
+                    with write_lock:
+                        name = re.search(r"\[(.*?)\]", name).group(1)
+                        df = add_card_to_table(df, card_id, name, price, link, csv_file)
+                    print(f"id {card_id}: added")
+                else:
+                    none_streak += 1
+
+                    print(
+                        f"id {card_id}: skipped (no data). Current none streak: {none_streak}"
+                    )
+
+                if none_streak >= 15:
+                    print("No more data found. Stopping.")
+                    return
+
+        start_id += batch_size
+
+if __name__ == "__main__":
+    fetch_batch()
